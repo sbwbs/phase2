@@ -1,0 +1,77 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+venv_new/
+ENV/
+env/
+.venv/
+
+# Customer data - DO NOT COMMIT
+*.xlsx
+*.xls
+*.tmx
+*.csv
+
+# Logs and results
+logs/
+*.log
+results/
+
+# Project-specific data directories (customer data)
+projects/*/data/
+projects/*/output/
+projects/*/logs/
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Customer-specific test data
+Phase 2_AI testing kit/
+clinical_protocol_system/data/
+
+# Qdrant/Valkey local data
+qdrant_data/
+valkey_data/

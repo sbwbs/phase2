@@ -1,0 +1,115 @@
+{
+  "experiment_settings": {
+    "default_variant": "standard",
+    "experiment_mode": false,
+    "auto_save_results": true,
+    "quality_metrics": ["terminology_accuracy", "regulatory_compliance", "cultural_adaptation", "sentence_structure"]
+  },
+  "custom_variants": {
+    "medical_device": {
+      "name": "Medical Device Protocol Style Guide",
+      "description": "Specialized for medical device clinical trials",
+      "estimated_tokens": 350,
+      "quality_score": 0.85,
+      "token_efficiency": 0.87,
+      "enabled": true,
+      "custom_rules": {
+        "device_specific_terminology": [
+          "의료기기 → Medical Device",
+          "임상평가 → Clinical Evaluation",
+          "안전성평가 → Safety Assessment",
+          "성능평가 → Performance Assessment"
+        ],
+        "regulatory_framework": [
+          "Follow ISO 14155 for medical device clinical investigations",
+          "Comply with Medical Device Regulation (MDR) requirements",
+          "Include risk management per ISO 14971"
+        ]
+      }
+    },
+    "pharma_focused": {
+      "name": "Pharmaceutical Protocol Style Guide",
+      "description": "Optimized for pharmaceutical clinical trials",
+      "estimated_tokens": 450,
+      "quality_score": 0.88,
+      "token_efficiency": 0.83,
+      "enabled": true,
+      "custom_rules": {
+        "pharma_terminology": [
+          "임상시험 → Clinical Trial (pharma context)",
+          "시험용의약품 → Investigational Medicinal Product (IMP)",
+          "약물동태학 → Pharmacokinetics",
+          "약물역학 → Pharmacodynamics"
+        ],
+        "regulatory_compliance": [
+          "Follow ICH-GCP E6(R2) for pharmaceutical trials",
+          "Include Good Clinical Practice requirements",
+          "Reference applicable FDA/EMA guidelines"
+        ]
+      }
+    },
+    "minimal_regulatory": {
+      "name": "Minimal Regulatory Style Guide",
+      "description": "Essential regulatory requirements only",
+      "estimated_tokens": 150,
+      "quality_score": 0.65,
+      "token_efficiency": 0.92,
+      "enabled": true,
+      "custom_rules": {
+        "essential_terms": [
+          "임상시험 → Clinical Study",
+          "시험대상자 → Study Subject",
+          "이상반응 → Adverse Event"
+        ],
+        "regulatory_requirements": [
+          "Follow ICH-GCP standards",
+          "Maintain subject safety priority",
+          "Require informed consent"
+        ]
+      }
+    }
+  },
+  "a_b_testing": {
+    "enabled": false,
+    "variants": ["none", "minimal", "standard"],
+    "distribution": "round_robin",
+    "min_segments_per_variant": 10,
+    "quality_threshold": 0.7,
+    "auto_switch_on_quality": true
+  },
+  "quality_assessment": {
+    "metrics": {
+      "terminology_accuracy": {
+        "weight": 0.4,
+        "description": "Accuracy of medical and regulatory terminology"
+      },
+      "regulatory_compliance": {
+        "weight": 0.3,
+        "description": "Compliance with ICH-GCP and regulatory standards"
+      },
+      "cultural_adaptation": {
+        "weight": 0.2,
+        "description": "Proper Korean to English cultural transformation"
+      },
+      "sentence_structure": {
+        "weight": 0.1,
+        "description": "Appropriate sentence length and structure"
+      }
+    },
+    "scoring": {
+      "excellent": 0.9,
+      "good": 0.7,
+      "acceptable": 0.5,
+      "poor": 0.3
+    }
+  },
+  "token_optimization": {
+    "target_reduction": 0.80,
+    "max_style_guide_tokens": 600,
+    "efficiency_thresholds": {
+      "high": 0.85,
+      "medium": 0.75,
+      "low": 0.65
+    }
+  }
+}

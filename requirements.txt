@@ -1,0 +1,40 @@
+# Core dependencies
+streamlit>=1.31.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+python-dotenv>=1.0.0
+
+# LLM Providers (same as Phase 1)
+openai>=1.51.2
+google-generativeai>=0.8.3
+anthropic>=0.38.0
+httpx>=0.28.1
+
+# Memory Tier 1: Valkey (Redis-compatible)
+valkey>=6.0.0
+hiredis>=2.3.0
+
+# Memory Tier 2: Qdrant Vector Database
+qdrant-client>=1.13.3
+# Note: fastembed no longer needed - using Qdrant's built-in BM25 for sparse vectors
+
+# Memory Tier 3: Mem0 Agentic Memory
+mem0>=0.1.0
+
+# Orchestration and Pipeline
+celery>=5.3.0
+kombu>=5.3.0
+
+# Monitoring and Logging
+structlog>=24.1.0
+prometheus-client>=0.20.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
+
+# Development
+black>=24.3.0
+ruff>=0.3.0
+mypy>=1.9.0
