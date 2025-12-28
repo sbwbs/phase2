@@ -47,6 +47,7 @@ QDRANT_AVAILABLE = False
 QDRANT_IMPORT_ERROR = None
 try:
     from memory.qdrant_manager import QdrantManager
+    from memory.qdrant_config import QdrantConfig
     from loaders.qdrant_data_loader import QdrantDataLoader, GLOSSARY_COLLECTION, TM_COLLECTION_KO_EN
     QDRANT_AVAILABLE = True
 except ImportError as e:
@@ -54,6 +55,10 @@ except ImportError as e:
     # Log the actual error so it's not silent
     import logging
     logging.getLogger(__name__).warning(f"⚠️ Qdrant imports failed: {e}. Semantic search will be disabled.")
+
+# Default thresholds (can be overridden by QdrantConfig)
+DEFAULT_GLOSSARY_SCORE_THRESHOLD = 0.75
+DEFAULT_TM_SCORE_THRESHOLD = 0.70
 
 @dataclass
 class KOENTranslationResult:
@@ -113,6 +118,15 @@ class ImprovedKOENPipeline:
         self.use_enhanced_prompts = use_enhanced_prompts
         self.strict_qdrant = strict_qdrant
         self.qdrant_manager = None
+        self.qdrant_config = None
+
+        # Collection names (can be overridden by project-scoped config)
+        self.glossary_collection = GLOSSARY_COLLECTION if QDRANT_AVAILABLE else "glossary"
+        self.tm_collection = TM_COLLECTION_KO_EN if QDRANT_AVAILABLE else "tm_ko_en"
+
+        # Search thresholds (can be overridden by config)
+        self.glossary_score_threshold = DEFAULT_GLOSSARY_SCORE_THRESHOLD
+        self.tm_score_threshold = DEFAULT_TM_SCORE_THRESHOLD
 
         # Validate Qdrant availability if requested
         if use_qdrant and not QDRANT_AVAILABLE:
@@ -284,6 +298,7 @@ class ImprovedKOENPipeline:
         """
         Validate that Qdrant search actually works before relying on it.
         Performs a test search to catch configuration issues early.
+        Uses hybrid_search to validate the full search pipeline.
 
         Returns:
             True if search works, False otherwise
@@ -292,23 +307,27 @@ class ImprovedKOENPipeline:
             return False
 
         try:
-            # Test search on glossary collection with a simple Korean term
+            # Test hybrid search on glossary collection with a simple Korean term
             test_query = "임상시험"  # "clinical trial" - common medical term
-            results = self.qdrant_manager.search(GLOSSARY_COLLECTION, test_query, limit=1)
+            results = self.qdrant_manager.hybrid_search(
+                self.glossary_collection, test_query, limit=1
+            )
 
             # Check if we got results (even 0 results is OK, we're testing the search mechanism)
-            self.logger.info(f"✅ Qdrant search validation passed (glossary returned {len(results)} results)")
+            self.logger.info(f"✅ Qdrant hybrid search validation passed (glossary '{self.glossary_collection}' returned {len(results)} results)")
 
             # Also test TM collection if it exists
             try:
-                tm_results = self.qdrant_manager.search(TM_COLLECTION_KO_EN, test_query, limit=1)
-                self.logger.info(f"✅ Qdrant TM search validation passed (returned {len(tm_results)} results)")
+                tm_results = self.qdrant_manager.hybrid_search(
+                    self.tm_collection, test_query, limit=1
+                )
+                self.logger.info(f"✅ Qdrant TM hybrid search validation passed ('{self.tm_collection}' returned {len(tm_results)} results)")
             except Exception as e:
                 self.logger.warning(f"⚠️ Qdrant TM search validation failed: {e} (TM may not be loaded)")
 
             return True
         except Exception as e:
-            self.logger.error(f"❌ Qdrant search validation failed: {e}")
+            self.logger.error(f"❌ Qdrant hybrid search validation failed: {e}")
             return False
 
     def diagnose_qdrant_setup(self) -> dict:
@@ -325,13 +344,17 @@ class ImprovedKOENPipeline:
             'manager_initialized': self.qdrant_manager is not None,
             'use_qdrant_flag': self.use_qdrant,
             'strict_mode': self.strict_qdrant,
+            'glossary_collection': self.glossary_collection,
+            'tm_collection': self.tm_collection,
+            'glossary_threshold': self.glossary_score_threshold,
+            'tm_threshold': self.tm_score_threshold,
             'collections': {},
             'search_test': {}
         }
 
         if self.qdrant_manager:
-            # Check collections
-            for coll_name in [GLOSSARY_COLLECTION, TM_COLLECTION_KO_EN]:
+            # Check collections (using dynamic names)
+            for coll_name in [self.glossary_collection, self.tm_collection]:
                 try:
                     count = self.qdrant_manager.get_collection_count(coll_name)
                     is_hybrid = self.qdrant_manager.is_collection_hybrid(coll_name)
@@ -346,13 +369,14 @@ class ImprovedKOENPipeline:
                         'error': str(e)
                     }
 
-            # Test search on each collection
+            # Test hybrid search on each collection
             test_query = "테스트"
-            for coll_name in [GLOSSARY_COLLECTION, TM_COLLECTION_KO_EN]:
+            for coll_name in [self.glossary_collection, self.tm_collection]:
                 try:
-                    results = self.qdrant_manager.search(coll_name, test_query, limit=1)
+                    results = self.qdrant_manager.hybrid_search(coll_name, test_query, limit=1)
                     diagnostics['search_test'][coll_name] = {
                         'success': True,
+                        'search_type': 'hybrid',
                         'results_count': len(results)
                     }
                 except Exception as e:
@@ -493,30 +517,33 @@ class ImprovedKOENPipeline:
                 found_korean_terms.add(ko_term)
                 mandatory_violations.append(f"MANDATORY: '{ko_term}' → '{en_term}'")
 
-        # Search for additional terms - use Qdrant semantic search if enabled
+        # Search for additional terms - use Qdrant hybrid search if enabled
         if self.use_qdrant and self.qdrant_manager:
-            # Semantic search via Qdrant
+            # Hybrid search via Qdrant (dense + sparse for better exact term matching)
             try:
-                qdrant_results = self.qdrant_manager.search(
-                    GLOSSARY_COLLECTION,
+                # Use hybrid_search for combined semantic + exact term matching
+                qdrant_results = self.qdrant_manager.hybrid_search(
+                    self.glossary_collection,
                     korean_text,
-                    limit=15
+                    limit=15,
+                    score_threshold=self.glossary_score_threshold
                 )
                 for r in qdrant_results:
-                    if r['score'] >= 0.75:  # Semantic threshold
+                    # Threshold already applied by hybrid_search, but double-check
+                    if r['score'] >= self.glossary_score_threshold:
                         korean_term = r['payload'].get('korean', '')
                         if korean_term and korean_term not in found_korean_terms:
                             found_terms.append({
                                 'korean': korean_term,
                                 'english': r['payload'].get('english', ''),
-                                'source': f"Qdrant ({r['payload'].get('source', 'unknown')})",
+                                'source': f"Qdrant-Hybrid ({r['payload'].get('source', 'unknown')})",
                                 'mandatory': r['payload'].get('mandatory', False),
                                 'priority': r['payload'].get('priority', 2),
                                 'semantic_score': r['score']
                             })
                             found_korean_terms.add(korean_term)
             except Exception as e:
-                self.logger.warning(f"⚠️ Qdrant search failed: {e}, falling back to keyword search")
+                self.logger.warning(f"⚠️ Qdrant hybrid search failed: {e}, falling back to keyword search")
                 # Fall through to keyword search below
 
         # Fallback or supplement: keyword search in combined glossary
@@ -587,14 +614,16 @@ class ImprovedKOENPipeline:
             token_count += len(additional_section) // 4
 
         # Component 2B: TM Context (Translation Memory matches)
-        # Use Qdrant semantic search if enabled, else fuzzy matching
+        # Use Qdrant hybrid search if enabled, else fuzzy matching
         similar_segments = []
         if self.use_qdrant and self.qdrant_manager:
             try:
-                tm_results = self.qdrant_manager.search(
-                    TM_COLLECTION_KO_EN,
+                # Use hybrid_search for better exact phrase matching in TM
+                tm_results = self.qdrant_manager.hybrid_search(
+                    self.tm_collection,
                     korean_text,
-                    limit=5
+                    limit=5,
+                    score_threshold=self.tm_score_threshold
                 )
                 similar_segments = [
                     {
@@ -602,10 +631,10 @@ class ImprovedKOENPipeline:
                         'target': r['payload'].get('target', ''),
                         'similarity': r['score']
                     }
-                    for r in tm_results if r['score'] >= 0.70  # Semantic threshold
+                    for r in tm_results if r['score'] >= self.tm_score_threshold
                 ][:3]  # Top 3
             except Exception as e:
-                self.logger.debug(f"Qdrant TM search failed: {e}, using fuzzy matching")
+                self.logger.debug(f"Qdrant TM hybrid search failed: {e}, using fuzzy matching")
                 # Fall through to fuzzy matching
 
         # Fallback to fuzzy matching if no Qdrant results or Qdrant disabled
