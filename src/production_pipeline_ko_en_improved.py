@@ -103,13 +103,17 @@ class ImprovedKOENPipeline:
                  use_qdrant: bool = False,
                  qdrant_url: Optional[str] = None,
                  qdrant_api_key: Optional[str] = None,
-                 strict_qdrant: bool = False):
+                 strict_qdrant: bool = False,
+                 project_id: Optional[str] = None):
         """
         Initialize the KO-EN translation pipeline.
 
         Args:
             strict_qdrant: If True, raise error if Qdrant is requested but unavailable.
                           If False (default), silently fall back to keyword search.
+            project_id: Project identifier for project-scoped Qdrant collections.
+                       If provided, collections will be named like "{project_id}_glossary".
+                       Falls back to QDRANT_PROJECT_ID env var if not provided.
         """
         self.model_name = model_name
         self.batch_size = batch_size
@@ -119,14 +123,24 @@ class ImprovedKOENPipeline:
         self.strict_qdrant = strict_qdrant
         self.qdrant_manager = None
         self.qdrant_config = None
+        self.project_id = project_id
 
-        # Collection names (can be overridden by project-scoped config)
-        self.glossary_collection = GLOSSARY_COLLECTION if QDRANT_AVAILABLE else "glossary"
-        self.tm_collection = TM_COLLECTION_KO_EN if QDRANT_AVAILABLE else "tm_ko_en"
-
-        # Search thresholds (can be overridden by config)
-        self.glossary_score_threshold = DEFAULT_GLOSSARY_SCORE_THRESHOLD
-        self.tm_score_threshold = DEFAULT_TM_SCORE_THRESHOLD
+        # Create QdrantConfig for project-scoped collections (if Qdrant is available)
+        if QDRANT_AVAILABLE:
+            # Create config - uses project_id param or falls back to QDRANT_PROJECT_ID env var
+            self.qdrant_config = QdrantConfig.from_env(project_id=project_id or "")
+            # Get project-scoped collection names from config
+            self.glossary_collection = self.qdrant_config.get_glossary_collection()
+            self.tm_collection = self.qdrant_config.get_tm_collection("ko_en")
+            # Use thresholds from config
+            self.glossary_score_threshold = self.qdrant_config.glossary_score_threshold
+            self.tm_score_threshold = self.qdrant_config.tm_score_threshold
+        else:
+            # Fallback to defaults if Qdrant not available
+            self.glossary_collection = "glossary"
+            self.tm_collection = "tm_ko_en"
+            self.glossary_score_threshold = DEFAULT_GLOSSARY_SCORE_THRESHOLD
+            self.tm_score_threshold = DEFAULT_TM_SCORE_THRESHOLD
 
         # Validate Qdrant availability if requested
         if use_qdrant and not QDRANT_AVAILABLE:
@@ -271,28 +285,32 @@ class ImprovedKOENPipeline:
         )
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"📋 Improved KO-EN Pipeline initialized with hallucination detection")
+        # Log project-scoped collection names
+        if self.project_id:
+            self.logger.info(f"📦 Project-scoped collections: glossary='{self.glossary_collection}', TM='{self.tm_collection}'")
 
     def _load_data_to_qdrant(self) -> None:
         """Load glossary and TM to Qdrant if not already populated."""
         if not self.qdrant_manager:
             return
 
-        loader = QdrantDataLoader(self.qdrant_manager)
+        # Pass config to loader for project-scoped collection names
+        loader = QdrantDataLoader(self.qdrant_manager, config=self.qdrant_config)
 
         # Load glossary (uses self.combined_glossary already loaded)
         glossary_count = loader.load_glossary(self.combined_glossary)
         if glossary_count > 0:
-            self.logger.info(f"📚 Loaded {glossary_count} glossary terms to Qdrant")
+            self.logger.info(f"📚 Loaded {glossary_count} glossary terms to Qdrant collection '{self.glossary_collection}'")
 
         # Load TM (uses self.tm_loader if available)
         if self.tm_loader and hasattr(self.tm_loader, 'translation_units'):
             tm_count = loader.load_tm_ko_en(self.tm_loader.translation_units)
             if tm_count > 0:
-                self.logger.info(f"📚 Loaded {tm_count} TM pairs to Qdrant")
+                self.logger.info(f"📚 Loaded {tm_count} TM pairs to Qdrant collection '{self.tm_collection}'")
 
-        # Log collection stats
+        # Log collection stats (using dynamic collection names)
         stats = loader.get_collection_stats()
-        self.logger.info(f"📊 Qdrant collections: Glossary={stats.get(GLOSSARY_COLLECTION, 0)}, TM={stats.get(TM_COLLECTION_KO_EN, 0)}")
+        self.logger.info(f"📊 Qdrant collections: Glossary={stats.get(self.glossary_collection, 0)}, TM={stats.get(self.tm_collection, 0)}")
 
     def _validate_qdrant_search(self) -> bool:
         """

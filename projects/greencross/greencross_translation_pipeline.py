@@ -126,7 +126,8 @@ class GreenCrossTranslationPipeline:
             batch_size=50,  # Batch size for processing
             use_enhanced_prompts=True,  # REGULATORY_COMPLIANCE_ENHANCED (customer feedback + examples)
             greencross_glossary_path=glossary_file,  # GreenCross glossary
-            tmx_memory_path=tm_file  # Translation Memory
+            tmx_memory_path=tm_file,  # Translation Memory
+            project_id="greencross"  # Use project-scoped Qdrant collections
         )
 
         # Initialize Valkey session
