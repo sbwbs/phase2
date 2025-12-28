@@ -528,6 +528,16 @@ class ImprovedKOENPipeline:
                     limit=15,
                     score_threshold=self.glossary_score_threshold
                 )
+
+                # Log retrieval results
+                if qdrant_results:
+                    self.logger.info(f"🔍 Glossary hybrid search: query='{korean_text[:40]}...' → {len(qdrant_results)} results from '{self.glossary_collection}'")
+                    top_matches = [(r['payload'].get('korean', ''), r['payload'].get('english', ''), r['score']) for r in qdrant_results[:3]]
+                    for ko, en, score in top_matches:
+                        self.logger.debug(f"   • [{score:.3f}] {ko} → {en}")
+                else:
+                    self.logger.debug(f"🔍 Glossary hybrid search: query='{korean_text[:40]}...' → 0 results")
+
                 for r in qdrant_results:
                     # Threshold already applied by hybrid_search, but double-check
                     if r['score'] >= self.glossary_score_threshold:
@@ -548,6 +558,7 @@ class ImprovedKOENPipeline:
 
         # Fallback or supplement: keyword search in combined glossary
         if not self.use_qdrant or not self.qdrant_manager:
+            keyword_matches = 0
             for term_entry in self.combined_glossary:
                 korean_term = term_entry.get('korean', '')
                 if korean_term and korean_term in korean_text:
@@ -560,9 +571,16 @@ class ImprovedKOENPipeline:
                             'priority': 2
                         })
                         found_korean_terms.add(korean_term)
-        
+                        keyword_matches += 1
+            if keyword_matches > 0:
+                self.logger.info(f"🔍 Keyword search (fallback): {keyword_matches} matches in combined glossary")
+
         # Sort by mandatory first, then priority
         found_terms.sort(key=lambda x: (x['mandatory'], x['priority']), reverse=True)
+
+        # Log summary of all found terms
+        mandatory_count = len([t for t in found_terms if t.get('mandatory')])
+        self.logger.info(f"📋 Glossary search complete: {len(found_terms)} total terms ({mandatory_count} mandatory, {len(found_terms) - mandatory_count} additional)")
 
         # Auto-lock glossary matches in Valkey (if enabled)
         if self.use_valkey and self.memory and segment_id:
@@ -625,6 +643,17 @@ class ImprovedKOENPipeline:
                     limit=5,
                     score_threshold=self.tm_score_threshold
                 )
+
+                # Log TM retrieval results
+                if tm_results:
+                    self.logger.info(f"🔍 TM hybrid search: query='{korean_text[:40]}...' → {len(tm_results)} matches from '{self.tm_collection}'")
+                    for r in tm_results[:3]:
+                        src_preview = r['payload'].get('source', '')[:30]
+                        tgt_preview = r['payload'].get('target', '')[:30]
+                        self.logger.debug(f"   • [{r['score']:.3f}] {src_preview}... → {tgt_preview}...")
+                else:
+                    self.logger.debug(f"🔍 TM hybrid search: query='{korean_text[:40]}...' → 0 matches")
+
                 similar_segments = [
                     {
                         'source': r['payload'].get('source', ''),
@@ -644,6 +673,10 @@ class ImprovedKOENPipeline:
                 top_k=3,
                 threshold=0.75
             )
+            if similar_segments:
+                self.logger.info(f"🔍 TM fuzzy search (fallback): {len(similar_segments)} matches")
+                for seg in similar_segments[:3]:
+                    self.logger.debug(f"   • [{seg['similarity']:.3f}] {seg['source'][:30]}...")
 
         if similar_segments and token_count < 500:
             search_method = "Semantic" if self.use_qdrant else "Fuzzy"
