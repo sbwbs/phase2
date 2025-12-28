@@ -170,7 +170,8 @@ class SKBSTranslationPipeline:
             use_valkey=True,  # Enable Valkey for term consistency
             batch_size=50,  # Batch size for processing
             use_enhanced_prompts=True,  # Use style guide
-            tmx_memory_path=self.TM_FILE  # SKBS Translation Memory (18,562 units)
+            tmx_memory_path=self.TM_FILE,  # SKBS Translation Memory (18,562 units)
+            project_id="skbs"  # Use project-scoped Qdrant collections
         )
 
         # Store style guide for use in prompts

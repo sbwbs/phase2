@@ -172,7 +172,8 @@ class SKBSTranslationPipelineRange:
             use_valkey=True,
             batch_size=50,
             use_enhanced_prompts=True,
-            tmx_memory_path=self.TM_FILE
+            tmx_memory_path=self.TM_FILE,
+            project_id="skbs"  # Use project-scoped Qdrant collections
         )
 
         # Store style guide for use in prompts

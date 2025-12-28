@@ -279,6 +279,7 @@ def create_pipeline(glossary_terms, tm_loader):
         "use_valkey": USE_VALKEY,
         "greencross_glossary_path": greencross_path,
         "tmx_memory_path": str(TMX_FILE) if TMX_FILE.exists() else None,
+        "project_id": PROJECT_ID,  # Use project-scoped Qdrant collections
     }
 
     qdrant_manager = None

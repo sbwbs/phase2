@@ -549,6 +549,7 @@ def main():
         "combined_glossary": glossary_terms,
         "tm_loader": tm_loader,
         "use_valkey": True,
+        "project_id": PROJECT_ID,  # Use project-scoped Qdrant collections
     }}
 
     if USE_QDRANT:

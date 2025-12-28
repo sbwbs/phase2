@@ -149,7 +149,8 @@ class GreenCrossRangeTranslationPipeline:
             batch_size=50,
             use_enhanced_prompts=True,
             greencross_glossary_path=glossary_file,
-            tmx_memory_path=tm_file
+            tmx_memory_path=tm_file,
+            project_id="greencross"  # Use project-scoped Qdrant collections
         )
 
         pipeline.session_metadata.doc_id = f"greencross_range_{self.start_idx}_{self.end_idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
