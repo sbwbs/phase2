@@ -179,8 +179,10 @@ def setup_qdrant_collections(glossary_terms, tm_loader):
     """
     Create Qdrant collections and load data using QdrantManager + QdrantDataLoader.
     Uses hybrid search (dense + SPLADE) for better retrieval.
+    Returns the configured QdrantManager for reuse in the pipeline.
     """
     from memory.qdrant_manager import QdrantManager
+    from memory.qdrant_config import QdrantConfig
     from loaders.qdrant_data_loader import QdrantDataLoader
 
     qdrant_url = os.getenv("QDRANT_URL")
@@ -189,27 +191,34 @@ def setup_qdrant_collections(glossary_terms, tm_loader):
 
     if not qdrant_url or not qdrant_api_key:
         logger.warning("⚠ Qdrant credentials not configured, skipping collection setup")
-        return
+        return None
 
     try:
-        # Initialize QdrantManager with hybrid search (SPLADE)
-        manager = QdrantManager(
+        # Create project-scoped configuration
+        config = QdrantConfig(
+            project_id=PROJECT_ID,
             qdrant_url=qdrant_url,
             qdrant_api_key=qdrant_api_key,
             openai_api_key=openai_api_key,
             embedding_model="text-embedding-3-small",
-            vector_size=512,  # text-embedding-3-small supports dimension reduction
+            vector_size=512,
             enable_hybrid=True,
-            sparse_model="splade"
+            sparse_model="splade",
+            use_qdrant=True
         )
+
+        # Initialize QdrantManager with hybrid search (SPLADE)
+        manager = QdrantManager.from_config(config)
 
         if not manager.health_check():
             logger.error("✗ Qdrant health check failed")
-            return
+            return None
 
-        # Initialize data loader (uses default collection names: glossary, tm_ko_en)
-        # Use smaller batch size for hybrid mode (SPLADE + dense is data-heavy)
-        loader = QdrantDataLoader(manager, batch_size=50)
+        # Initialize data loader with project-scoped config
+        # Collections will be: gsk_arexvy_glossary, gsk_arexvy_tm_ko_en
+        loader = QdrantDataLoader(manager, config=config, batch_size=50)
+
+        logger.info(f"📁 Using project-scoped collections: {config.get_all_collections()}")
 
         # Load glossary (skips if already populated)
         if glossary_terms:
@@ -218,7 +227,8 @@ def setup_qdrant_collections(glossary_terms, tm_loader):
                 logger.info(f"✓ Loaded {glossary_count} glossary terms to Qdrant (hybrid)")
             else:
                 stats = loader.get_collection_stats()
-                logger.info(f"✓ Qdrant glossary already populated: {stats.get('glossary', 0)} terms")
+                glossary_col = config.get_glossary_collection()
+                logger.info(f"✓ Qdrant glossary already populated: {stats.get(glossary_col, 0)} terms")
 
         # Load TM (skips if already populated)
         if tm_loader and tm_loader.translation_units:
@@ -235,16 +245,21 @@ def setup_qdrant_collections(glossary_terms, tm_loader):
                 logger.info(f"✓ Loaded {tm_count} TM pairs to Qdrant (hybrid)")
             else:
                 stats = loader.get_collection_stats()
-                logger.info(f"✓ Qdrant TM already populated: {stats.get('tm_ko_en', 0)} pairs")
+                tm_col = config.get_tm_collection("ko_en")
+                logger.info(f"✓ Qdrant TM already populated: {stats.get(tm_col, 0)} pairs")
 
         # Show final stats
         stats = loader.get_collection_stats()
-        logger.info(f"📊 Qdrant collections: glossary={stats.get('glossary', 0)}, tm_ko_en={stats.get('tm_ko_en', 0)}")
+        logger.info(f"📊 Qdrant collections: {stats}")
+
+        # Return manager and config for reuse
+        return manager, config
 
     except Exception as e:
         logger.error(f"✗ Error setting up Qdrant: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
 
 def create_pipeline(glossary_terms, tm_loader):
@@ -266,24 +281,48 @@ def create_pipeline(glossary_terms, tm_loader):
         "tmx_memory_path": str(TMX_FILE) if TMX_FILE.exists() else None,
     }
 
+    qdrant_manager = None
+    qdrant_config = None
+
     # Add Qdrant if enabled
     if USE_QDRANT:
-        # Setup Qdrant collections and load data
-        setup_qdrant_collections(glossary_terms, tm_loader)
-
-        pipeline_kwargs.update({
-            "use_qdrant": True,
-            "qdrant_url": os.getenv("QDRANT_URL"),
-            "qdrant_api_key": os.getenv("QDRANT_API_KEY"),
-        })
-        logger.info("✓ Qdrant semantic search enabled")
+        # Setup Qdrant collections and load data - returns configured manager
+        result = setup_qdrant_collections(glossary_terms, tm_loader)
+        if result:
+            qdrant_manager, qdrant_config = result
+            pipeline_kwargs.update({
+                "use_qdrant": True,
+                "qdrant_url": os.getenv("QDRANT_URL"),
+                "qdrant_api_key": os.getenv("QDRANT_API_KEY"),
+            })
+            logger.info("✓ Qdrant hybrid semantic search enabled (project-scoped)")
+        else:
+            logger.warning("⚠ Qdrant setup failed, falling back to keyword search")
 
     pipeline = ImprovedKOENPipeline(**pipeline_kwargs)
+
+    # Inject the pre-configured Qdrant manager with project-scoped collections
+    if qdrant_manager and qdrant_config:
+        pipeline.qdrant_manager = qdrant_manager
+        pipeline.qdrant_config = qdrant_config
+        # Update collection names to use project-scoped versions
+        pipeline.glossary_collection = qdrant_config.get_glossary_collection()
+        pipeline.tm_collection = qdrant_config.get_tm_collection("ko_en")
+        logger.info(f"✓ Injected project-scoped Qdrant manager (collections: {qdrant_config.get_all_collections()})")
 
     # Override combined_glossary with our loaded terms
     if glossary_terms:
         pipeline.combined_glossary = glossary_terms
-        logger.info(f"✓ Using custom glossary: {len(glossary_terms)} terms")
+        # Invalidate cache to ensure fresh results with new glossary
+        if pipeline.use_valkey and hasattr(pipeline, 'memory') and pipeline.memory:
+            try:
+                pipeline.memory.invalidate_cache("glossary_*")
+                logger.info(f"✓ Using custom glossary: {len(glossary_terms)} terms (cache invalidated)")
+            except Exception as e:
+                logger.warning(f"⚠ Cache invalidation failed: {e}")
+                logger.info(f"✓ Using custom glossary: {len(glossary_terms)} terms")
+        else:
+            logger.info(f"✓ Using custom glossary: {len(glossary_terms)} terms")
 
     # Override TM loader with our loaded data
     if tm_loader:
